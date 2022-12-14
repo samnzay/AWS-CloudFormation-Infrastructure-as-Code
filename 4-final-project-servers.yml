@@ -1,0 +1,178 @@
+Description: >
+    Samuel Nzayisenga | IaC FinalProject - Cloud Servers
+
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be Prefixed to server resources
+    Type: String
+
+  EC2InstanceType:
+    Description: EC2 Machine type
+    Type: String
+
+  AMIToUse:
+    Description: AMI To use for EC2 Instance | Ubuntu_18-LTS AMI_Id
+    Type: String 
+
+#DEFINE RESOURCES
+Resources:
+  #Define Load Balancer Security Group
+  LBSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP to our Load Balancer
+      VpcId:
+        Fn::ImportValue:
+          !Sub "${EnvironmentName}-VPCID"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        #Allow Load balancer to talk to Private EC2 inside VPC on port 80 eg: for health check
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  #Web Server Security Group
+  WebServerSecGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow to our hosts and SSH from loca machine only.
+      VpcId: 
+        Fn::ImportValue:
+          !Sub "${EnvironmentName}-VPCID"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIp: 0.0.0.0/0
+
+  #Define Launch Template / or Configuration Template
+  MyLaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateData:
+        ImageId: !Ref AMIToUse
+        InstanceType: !Ref EC2InstanceType
+        BlockDeviceMappings:
+        - DeviceName: "/dev/sdk"
+          Ebs:
+            VolumeSize: '10'
+        SecurityGroupIds:
+          - !Ref WebServerSecGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            sudo apt update -y
+            sudo apt-get install apache2 -y
+            sudo systemctl start apache2 -y
+            echo "<html><body><h1>it works! Udagram, Udacity</h1></br></hr><h3>IaC Project By Samuel NZAYISENGA</h3></body></html>" > /var/www/html/index.html
+  
+  #AutoScalingGroup
+  WebAppGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue:
+            !Sub "${EnvironmentName}-PRIV-NETS"
+      DesiredCapacity: 4
+      LaunchTemplate:
+        LaunchTemplateId: !Ref MyLaunchTemplate
+        Version: !GetAtt MyLaunchTemplate.LatestVersionNumber
+      MaxSize: '8'
+      MinSize: '4'
+      TargetGroupARNs:
+        - !Ref WebAppTargetGroup
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      
+      Tags:
+        - Key: Name
+          PropagateAtLaunch: false
+          Value: ASG
+
+  #Define Scaling Policy
+  WebServerTargetPolicy:
+   Type: AWS::AutoScaling::ScalingPolicy
+   Properties:
+     AutoScalingGroupName: !Ref WebAppGroup
+     PolicyType: TargetTrackingScaling
+     TargetTrackingConfiguration:
+       PredefinedMetricSpecification:
+         PredefinedMetricType: ASGAverageCPUUtilization
+       TargetValue: 80.0
+
+  #Define Load Balancer
+  WebAppLB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Subnets:
+        - Fn::ImportValue: !Sub "${EnvironmentName}-PUB1-SN"
+        - Fn::ImportValue: !Sub "${EnvironmentName}-PUB2-SN"
+      SecurityGroups:
+        - !Ref LBSecGroup
+
+  #Define the Listener
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref WebAppTargetGroup
+      LoadBalancerArn: !Ref WebAppLB
+      Port: '80'
+      Protocol: HTTP
+
+  #Define the Listener Rule
+  ALBListenerRule:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref 'WebAppTargetGroup'
+      Conditions:
+        - Field: path-pattern
+          Values: [/]
+      ListenerArn: !Ref 'Listener'
+      Priority: 1
+
+  #Define Target Groups
+  WebAppTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 60
+      HealthCheckPath: /
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 3
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId: 
+        Fn::ImportValue:
+          Fn::Sub: "${EnvironmentName}-VPCID"
+
+
+Outputs:
+  #Output Load Balancer URL for Direct access
+  URL:
+    Description: URL of the website
+    Value: !Join
+      - ''
+      - - 'http://'
+        - !GetAtt
+          - WebAppLB
+          - DNSName
