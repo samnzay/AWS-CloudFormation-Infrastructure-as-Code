@@ -14,6 +14,23 @@ Parameters:
     Description: AMI To use for EC2 Instance | Ubuntu_18-LTS AMI_Id
     Type: String 
 
+  BucketName:
+    Description: S3 Bucket name where EC2 html page file is stored.
+    Type: String
+    AllowedPattern: '^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$'
+    Default: samnzay-devops-bucket
+
+  StaticWebPageArchive:
+    Description: Archived website file.
+    Type: String
+    AllowedPattern: '^[0-9a-zA-Z.]+([0-9a-zA-Z-]*[0-9a-zA-Z.])*$'
+    Default: site.zip
+
+  BucketKeyPrefix:
+    AllowedPattern: '^[0-9a-zA-Z-/]*$'
+    Default: '/'
+    Type: String
+
 #DEFINE RESOURCES
 Resources:
   #Define Load Balancer Security Group
@@ -73,14 +90,20 @@ Resources:
             VolumeSize: '10'
         SecurityGroupIds:
           - !Ref WebServerSecGroup
+
+        IamInstanceProfile: 
+          Name: !Ref AppInstanceProfile #Instance profile Permission for our servers 
         UserData:
           Fn::Base64: !Sub |
             #!/bin/bash
             sudo apt update -y
-            sudo apt-get install apache2 -y
+            apt-get install unzip python3-pip apache2 awscli -y
             sudo systemctl start apache2 -y
-            echo "<html><body><h1>it works! Udagram, Udacity</h1></br></hr><h3>IaC Project By Samuel NZAYISENGA</h3></body></html>" > /var/www/html/index.html
-  
+            pip3 install --upgrade awscli
+
+            cd /var/www/html
+            aws s3 cp s3://${BucketName}/${StaticWebPageArchive} .
+            unzip -o ${StaticWebPageArchive}
   #AutoScalingGroup
   WebAppGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -164,6 +187,40 @@ Resources:
       VpcId: 
         Fn::ImportValue:
           Fn::Sub: "${EnvironmentName}-VPCID"
+
+  #S3 Roles for EC2 Instance
+  S3ReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Permission for S3 access from our servers
+      AssumeRolePolicyDocument:
+        Statement: 
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action: 
+              - sts:AssumeRole
+            Sid: ''
+      Policies:
+        - PolicyName: AuthenticatedS3GetObjects
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - s3:GetObject
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BucketName}${BucketKeyPrefix}*'
+  
+
+  AppInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref S3ReadOnlyRole
+
+  #=================================
 
 
 Outputs:
