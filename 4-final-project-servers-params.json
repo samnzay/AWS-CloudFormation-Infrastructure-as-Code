@@ -24,7 +24,7 @@
     ,
     {
         "ParameterKey": "StaticWebPageArchive",
-        "ParameterValue": "site.zip" 
+        "ParameterValue": "udagram.zip" 
     }
     
 

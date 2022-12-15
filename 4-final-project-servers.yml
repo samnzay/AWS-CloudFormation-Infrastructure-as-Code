@@ -232,3 +232,4 @@ Outputs:
         - !GetAtt
           - WebAppLB
           - DNSName
+        - '/udagram.html'
