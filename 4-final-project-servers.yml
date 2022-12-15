@@ -192,7 +192,7 @@ Resources:
   S3ReadOnlyRole:
     Type: AWS::IAM::Role
     Properties:
-      Description: Permission for S3 access from our servers
+      Description: EC2 Permission for S3 access from our servers limited to ReadOnly
       AssumeRolePolicyDocument:
         Statement: 
           - Effect: Allow
@@ -212,7 +212,6 @@ Resources:
                   - s3:GetObject
                 Resource:
                   - !Sub 'arn:aws:s3:::${BucketName}${BucketKeyPrefix}*'
-  
 
   AppInstanceProfile:
     Type: AWS::IAM::InstanceProfile
